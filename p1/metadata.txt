@@ -1,5 +1,0 @@
-{
-  "name": "اخرین نسخه",
-  "description": "Upload an image of a book page (Persian or English), and the AI will translate it and generate a professional book layout for you. / یک تصویر از صفحه کتاب (فارسی یا انگلیسی) بارگذاری کنید تا هوش مصنوعی آن را به زبان دیگر ترجمه کرده و طرح‌بندی حرفه‌ای کتاب را برای شما تولید کند.",
-  "requestFramePermissions": []
-}

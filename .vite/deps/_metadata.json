@@ -1,0 +1,49 @@
+{
+  "hash": "a9e1a595",
+  "configHash": "49acd256",
+  "lockfileHash": "b24bfc40",
+  "browserHash": "d8f614e4",
+  "optimized": {
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "c2fb55e1",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "c2570945",
+      "needsInterop": true
+    },
+    "jotai": {
+      "src": "../../node_modules/jotai/esm/index.mjs",
+      "file": "jotai.js",
+      "fileHash": "61588fec",
+      "needsInterop": false
+    },
+    "perfect-freehand": {
+      "src": "../../node_modules/perfect-freehand/dist/esm/index.mjs",
+      "file": "perfect-freehand.js",
+      "fileHash": "a990eb23",
+      "needsInterop": false
+    },
+    "react-resize-detector": {
+      "src": "../../node_modules/react-resize-detector/build/index.esm.js",
+      "file": "react-resize-detector.js",
+      "fileHash": "6d2384c7",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-HCGKX5ED": {
+      "file": "chunk-HCGKX5ED.js"
+    },
+    "chunk-WNPTCGAH": {
+      "file": "chunk-WNPTCGAH.js"
+    },
+    "chunk-5WRI5ZAA": {
+      "file": "chunk-5WRI5ZAA.js"
+    }
+  }
+}
