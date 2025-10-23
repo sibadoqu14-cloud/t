@@ -1,0 +1,205 @@
+import React, { useMemo, useCallback, memo, useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
+import { ImageIcon } from './Icons';
+import { ProcessedPage, useLocale, ImageStyle } from './ImageToHtmlConverter';
+
+interface Placeholder {
+  pageIndex: number;
+  placeholderId: string;
+  alt: string;
+  style: ImageStyle;
+  width: string; // e.g. "250px"
+  height: string; // e.g. "300px" or ""
+}
+
+interface ImageManagerProps {
+  processedPages: ProcessedPage[];
+  onImageSrcUpdate: (pageIndex: number, placeholderId: string, newSrc: string) => void;
+  onImageStyleUpdate: (pageIndex: number, placeholderId: string, style: ImageStyle) => void;
+  onImageCustomSizeUpdate: (pageIndex: number, placeholderId: string, width: string, height: string) => void;
+}
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
+};
+
+interface PlaceholderEditorProps {
+    placeholder: Placeholder;
+    onImageSrcUpdate: (pageIndex: number, placeholderId: string, newSrc: string) => void;
+    onImageStyleUpdate: (pageIndex: number, placeholderId: string, style: ImageStyle) => void;
+    onImageCustomSizeUpdate: (pageIndex: number, placeholderId: string, width: string, height: string) => void;
+}
+
+const PlaceholderEditor = memo(({ placeholder: p, onImageSrcUpdate, onImageStyleUpdate, onImageCustomSizeUpdate }: PlaceholderEditorProps) => {
+    const { t } = useLocale();
+    const [customWidth, setCustomWidth] = useState(p.width.replace('px', ''));
+    const [customHeight, setCustomHeight] = useState(p.height.replace('px', ''));
+
+    useEffect(() => {
+        setCustomWidth(p.width.replace('px', ''));
+        setCustomHeight(p.height.replace('px', ''));
+    }, [p.width, p.height]);
+    
+    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            try {
+                const base64Src = await fileToBase64(file);
+                onImageSrcUpdate(p.pageIndex, p.placeholderId, base64Src);
+            } catch (error) {
+                console.error("Error converting file to Base64", error);
+            }
+        }
+    }, [onImageSrcUpdate, p.pageIndex, p.placeholderId]);
+
+    const handleCustomSizeBlur = () => {
+        const currentWidth = p.width.replace('px', '');
+        const currentHeight = p.height.replace('px', '');
+
+        if (customWidth !== currentWidth || customHeight !== currentHeight) {
+            onImageCustomSizeUpdate(p.pageIndex, p.placeholderId, customWidth, customHeight);
+            toast.success(t('toasts.imageSizeUpdated', { pageIndex: p.pageIndex + 1 }));
+        }
+    };
+    
+    const page = p.pageIndex; // A local variable for brevity
+    const pageLabel = t('pageManager.pageLabelFallback', { index: page + 1 });
+
+    return (
+      <div className="text-sm bg-gray-700/30 p-3 rounded-lg">
+          <p className="text-gray-300 mb-2 truncate" title={p.alt}>
+              <span className="font-semibold text-purple-400">{`${pageLabel}:`}</span> {p.alt}
+          </p>
+          <div className="flex items-center gap-3">
+              <label 
+                  htmlFor={`file-input-${p.pageIndex}-${p.placeholderId}`}
+                  className="inline-block bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs font-semibold py-1.5 px-3 rounded-full cursor-pointer transition-colors"
+              >
+                  {t('imageManager.chooseFile')}
+              </label>
+              <input 
+                  id={`file-input-${p.pageIndex}-${p.placeholderId}`}
+                  type="file" accept="image/*" onChange={handleFileChange} className="hidden"
+              />
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+              <button 
+                  onClick={() => onImageStyleUpdate(p.pageIndex, p.placeholderId, 'custom')}
+                  className={`text-xs px-3 py-1 rounded-full transition-colors ${p.style === 'custom' ? 'bg-purple-600 text-white font-semibold' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'}`}
+              >
+                  {t('imageManager.fit.custom')}
+              </button>
+              <button 
+                  onClick={() => onImageStyleUpdate(p.pageIndex, p.placeholderId, 'fixed')}
+                  className={`text-xs px-3 py-1 rounded-full transition-colors ${p.style === 'fixed' ? 'bg-purple-600 text-white font-semibold' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'}`}
+              >
+                  {t('imageManager.fit.fixed')}
+              </button>
+              <button 
+                  onClick={() => onImageStyleUpdate(p.pageIndex, p.placeholderId, 'rectangle')}
+                  className={`text-xs px-3 py-1 rounded-full transition-colors ${p.style === 'rectangle' ? 'bg-purple-600 text-white font-semibold' : 'bg-gray-600 text-gray-300 hover:bg-gray-500'}`}
+              >
+                  {t('imageManager.fit.rectangle')}
+              </button>
+          </div>
+
+          {p.style === 'custom' && (
+              <div className="flex items-center gap-2 mt-3">
+                  <input
+                      type="number"
+                      value={customWidth}
+                      onChange={(e) => setCustomWidth(e.target.value)}
+                      onBlur={handleCustomSizeBlur}
+                      placeholder={t('imageManager.customWidth')}
+                      className="w-20 bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                  <span className="text-gray-400 text-xs">×</span>
+                  <input
+                      type="number"
+                      value={customHeight}
+                      onChange={(e) => setCustomHeight(e.target.value)}
+                      onBlur={handleCustomSizeBlur}
+                      placeholder={t('imageManager.customHeight')}
+                      className="w-20 bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                  <span className="text-gray-400 text-xs">px</span>
+              </div>
+          )}
+      </div>
+    );
+});
+
+
+const ImageManager = ({ processedPages, onImageSrcUpdate, onImageStyleUpdate, onImageCustomSizeUpdate }: ImageManagerProps) => {
+  const { t } = useLocale();
+  const placeholders = useMemo<Placeholder[]>(() => {
+    const foundPlaceholders: Placeholder[] = [];
+    if (typeof DOMParser === 'undefined') return [];
+
+    const parser = new DOMParser();
+    processedPages.forEach((page, pageIndex) => {
+      const doc = parser.parseFromString(page.html, 'text/html');
+      const images = doc.querySelectorAll('img[data-placeholder-id]');
+      
+      images.forEach(img => {
+        const src = img.getAttribute('src');
+        const placeholderId = img.getAttribute('data-placeholder-id');
+        if (placeholderId && (src === '#' || !src)) {
+            const placeholderElement = img.closest('.image-placeholder') as HTMLElement | null;
+            let style: ImageStyle = 'custom';
+            if (placeholderElement?.classList.contains('fit-fixed')) {
+                style = 'fixed';
+            } else if (placeholderElement?.classList.contains('fit-rectangle')) {
+                style = 'rectangle';
+            }
+            
+            foundPlaceholders.push({
+                pageIndex,
+                placeholderId,
+                alt: img.getAttribute('alt') || 'Untitled Image',
+                style,
+                width: placeholderElement?.style.width || '',
+                height: placeholderElement?.style.height || '',
+            });
+        }
+      });
+    });
+    return foundPlaceholders;
+  }, [processedPages]);
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+        <div className="flex items-center gap-3 mb-4">
+            <ImageIcon className="w-5 h-5 text-gray-400" />
+            <h3 className="font-bold text-base text-gray-200">{t('imageManager.title')}</h3>
+        </div>
+        {placeholders.length > 0 ? (
+          <>
+            <div className="space-y-3">
+                {placeholders.map((p) => (
+                    <PlaceholderEditor
+                        key={`${p.pageIndex}-${p.placeholderId}`}
+                        placeholder={p}
+                        onImageSrcUpdate={onImageSrcUpdate}
+                        onImageStyleUpdate={onImageStyleUpdate}
+                        onImageCustomSizeUpdate={onImageCustomSizeUpdate}
+                    />
+                ))}
+            </div>
+            <p className="mt-4 text-xs text-gray-500">
+                {t('imageManager.instructions')}
+            </p>
+          </>
+        ) : (
+            <p className="text-sm text-gray-500 text-center py-4">{t('imageManager.noPlaceholders')}</p>
+        )}
+    </div>
+  );
+};
+
+export default memo(ImageManager);

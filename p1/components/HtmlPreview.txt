@@ -1,0 +1,30 @@
+import React, { memo } from 'react';
+import { useLocale } from './ImageToHtmlConverter';
+
+interface HtmlPreviewProps {
+  html: string;
+}
+
+const HtmlPreview = ({ html }: HtmlPreviewProps) => {
+  const { t } = useLocale();
+  return (
+    <div className="w-full h-full bg-gray-900/70 border border-gray-700/50 rounded-xl flex flex-col">
+       <div className="flex-1 bg-white rounded-lg overflow-hidden m-1">
+        {html ? (
+          <iframe
+            srcDoc={html}
+            title={t('preview.title')}
+            className="w-full h-full border-0"
+            sandbox="allow-scripts"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-500 p-4 text-center">
+              <p>{t('preview.placeholder')}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default memo(HtmlPreview);

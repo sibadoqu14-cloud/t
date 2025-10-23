@@ -1,0 +1,149 @@
+import React, { memo, useEffect, useState } from 'react';
+import { CheckIcon, RetryIcon, StopIcon, TrashIcon } from './Icons';
+import Loader from './Loader';
+import { QueueItem, useLocale } from './ImageToHtmlConverter';
+
+interface ProgressDisplayProps {
+  queue: QueueItem[];
+  onRetry: (itemId: string) => void;
+  onRemove: (itemId: string) => void;
+}
+
+const statusStyles: Record<string, { bg: string, text: string }> = {
+    queued: { bg: 'bg-gray-600', text: 'text-gray-200' },
+    processing: { bg: 'bg-blue-600', text: 'text-blue-100' },
+    completed: { bg: 'bg-green-600', text: 'text-green-100' },
+    error: { bg: 'bg-red-600', text: 'text-red-100' },
+    verifying: { bg: 'bg-purple-600', text: 'text-purple-100' },
+};
+
+const Thumbnail = memo(({ file }: { file: File }) => {
+    const [preview, setPreview] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (file && file.size > 0) {
+            const objectUrl = URL.createObjectURL(file);
+            setPreview(objectUrl);
+            return () => URL.revokeObjectURL(objectUrl);
+        }
+    }, [file]);
+
+    if (!preview) {
+        return <div className="w-10 h-10 bg-gray-700 rounded flex-shrink-0"></div>;
+    }
+
+    return <img src={preview} alt={file.name} className="w-10 h-10 object-cover rounded flex-shrink-0" />;
+});
+
+
+// FIX: Defined a separate interface for `ProgressItem` props. 
+// This resolves a TypeScript error where the special `key` prop, when passed in JSX, 
+// was causing a type mismatch with the component's inline prop type definition.
+interface ProgressItemProps {
+    item: QueueItem;
+    index: number;
+    onRetry: (id: string) => void;
+    onRemove: (id: string) => void;
+}
+
+// FIX: Wrapped `ProgressItem` in `React.memo`. As a list item, this prevents unnecessary
+// re-renders and can resolve subtle typing issues with special React props like `key`.
+const ProgressItem = memo(({ item, index, onRetry, onRemove }: ProgressItemProps) => {
+    const { t } = useLocale();
+    const { status, file, progressSteps, error, result } = item;
+    const style = statusStyles[status] || statusStyles.queued;
+
+    const pageNumber = result?.pageNumber;
+    const displayText =
+        status === 'completed' && pageNumber
+            ? t('pageManager.pageLabel', { pageNumber })
+            : file.name;
+
+    return (
+        <div className="p-3 bg-gray-800/60 rounded-lg">
+            <div className="flex items-center gap-3">
+                <div className="w-5 text-center text-gray-400 text-sm font-mono flex-shrink-0">{index + 1}</div>
+                <Thumbnail file={file} />
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-200 font-medium truncate" title={displayText}>{displayText}</p>
+                    <div className="flex items-center gap-2">
+                        <div className={`text-xs font-semibold px-2 py-0.5 rounded-full inline-block mt-1 ${style.bg} ${style.text}`}>
+                            {t(`progress.status.${status}`)}
+                        </div>
+                         {(status === 'processing' || status === 'verifying') && <Loader />}
+                    </div>
+                </div>
+                <div className="flex items-center gap-1">
+                    {status === 'error' && (
+                        <button onClick={() => onRetry(item.id)} title="Retry" className="p-1.5 text-gray-400 hover:text-green-400 hover:bg-green-500/20 rounded-full transition-colors">
+                            <RetryIcon className="w-4 h-4" />
+                        </button>
+                    )}
+                    {(status === 'queued' || status === 'error' || status === 'completed') && (
+                         <button onClick={() => onRemove(item.id)} title="Remove" className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/20 rounded-full transition-colors">
+                            <TrashIcon className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {status === 'processing' && (
+                 <ul className="space-y-1.5 mt-3 pl-2">
+                    {progressSteps.map((stepKey, index) => {
+                        const isLastStep = index === progressSteps.length - 1;
+                        const isSuccess = stepKey === 'progress.pageSuccess';
+                        
+                        let icon = <CheckIcon className="w-4 h-4 text-green-500" />;
+                        if (isLastStep && !isSuccess) {
+                            icon = <Loader />;
+                        }
+                        
+                        return (
+                            <li key={index} className="flex items-center text-xs">
+                                <div className="w-5 h-5 mr-1 flex-shrink-0 flex items-center justify-center">{icon}</div>
+                                <span className={isSuccess ? 'text-green-400' : 'text-gray-300'}>
+                                    {t(stepKey)}
+                                </span>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+
+            {status === 'error' && error && (
+                <div className="mt-2 text-red-400 text-xs bg-red-500/10 p-2 rounded">
+                    <p><span className="font-semibold">{t('progress.errorTitle')}:</span> {error}</p>
+                </div>
+            )}
+        </div>
+    );
+});
+
+
+const ProgressDisplay = ({ queue, onRetry, onRemove }: ProgressDisplayProps) => {
+  const { t } = useLocale();
+
+  return (
+    <div className="w-full p-4 bg-gray-900/50 border border-gray-700/50 rounded-xl flex flex-col h-full">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-md font-semibold text-gray-200">
+          {t('progress.title')}
+        </h3>
+        <span className="text-sm text-gray-400">{queue.length} items</span>
+      </div>
+      {queue.length > 0 ? (
+        <div className="flex-1 overflow-y-auto -mr-2 pr-2 space-y-2 hide-scrollbar">
+            {queue.map((item, index) => (
+                <ProgressItem key={item.id} item={item} index={index} onRetry={onRetry} onRemove={onRemove} />
+            ))}
+        </div>
+      ) : (
+          <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
+              <p>The processing queue is empty.</p>
+          </div>
+      )}
+    </div>
+  );
+};
+
+export default memo(ProgressDisplay);

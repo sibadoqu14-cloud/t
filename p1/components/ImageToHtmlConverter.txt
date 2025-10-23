@@ -1,0 +1,944 @@
+import React, { useState, useMemo, useCallback, useEffect, useRef, createContext, useContext } from 'react';
+import toast from 'react-hot-toast';
+import { convertImageToBookLayout, getFullHtmlDocument, verifyAndRefinePage } from '../services/geminiService';
+import { saveQueueToDB, loadQueueFromDB, saveAnalysisToDB, loadAnalysisFromDB, clearDB } from '../services/dbService';
+import ImageUploader from './ImageUploader';
+import HtmlPreview from './HtmlPreview';
+import ProgressDisplay from './ProgressDisplay';
+import ImageManager from './ImageManager';
+import PageManager from './PageManager';
+import { CopyIcon, DocumentTextIcon, DownloadIcon, ImageIcon, PdfIcon, SparklesIcon } from './Icons';
+
+// --- Localization Setup ---
+export type Locale = 'fa' | 'en';
+export type Language = 'Persian' | 'English';
+export type ImageStyle = 'custom' | 'fixed' | 'rectangle';
+
+const persianNumerals = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+const toPersianNumerals = (input: number | string): string => {
+    const text = String(input);
+    return text.replace(/[0-9]/g, (digit) => persianNumerals[parseInt(digit, 10)]);
+};
+
+const translations = {
+  fa: {
+    'app.title': 'تبدیل عکس به کد HTML با Gemini',
+    'uploader.prompt': 'تصاویر را بکشید و رها کنید یا برای انتخاب کلیک کنید',
+    'uploader.addMore': 'افزودن تصاویر بیشتر',
+    'uploader.selected': '{{count}} تصویر در صف قرار گرفت.',
+    'uploader.limitError': 'شما فقط می‌توانید حداکثر {{max}} فایل را همزمان آپلود کنید.',
+    'preview.title': 'پیش‌نمایش HTML',
+    'preview.placeholder': 'پس از بارگذاری تصویر، پیش‌نمایش کتاب در اینجا ظاهر می‌شود.',
+    'progress.title': 'صف پردازش',
+    'progress.step1': 'مرحله ۱ از ۲: تحلیل و ترجمه...',
+    'progress.step2': 'مرحله ۲ از ۲: صفحه‌آرایی...',
+    'progress.pageSuccess': 'تکمیل شد.',
+    'progress.errorTitle': 'خطا',
+    'progress.status.queued': 'در صف',
+    'progress.status.processing': 'در حال پردازش',
+    'progress.status.completed': 'تکمیل شد',
+    'progress.status.error': 'خطا',
+    'progress.status.verifying': 'در حال بازبینی',
+    'progress.userCancelled': 'عملیات توسط کاربر لغو شد.',
+    'progress.cancel': 'لغو',
+    'imageManager.title': 'مدیریت تصاویر',
+    'imageManager.page': 'صفحه {{pageIndex}}:',
+    'imageManager.chooseFile': 'انتخاب فایل',
+    'imageManager.instructions': 'برای جایگذاری، فایل تصویر مربوط به هر مورد را انتخاب کنید.',
+    'imageManager.noPlaceholders': 'هیچ جایگزین تصویری برای پر کردن وجود ندارد.',
+    'imageManager.fit.custom': 'سفارشی',
+    'imageManager.fit.fixed': 'کادر ثابت',
+    'imageManager.fit.rectangle': 'کادر مستطیل',
+    'imageManager.customWidth': 'عرض',
+    'imageManager.customHeight': 'ارتفاع',
+    'pageManager.title': 'مدیریت صفحات',
+    'pageManager.progressTitle': 'مدیریت صفحات ({{processed}}/{{total}})',
+    'pageManager.resetTitle': 'پاک کردن کتاب',
+    'pageManager.instructions': 'برای مرتب‌سازی، صفحات را بکشید و رها کنید.',
+    'pageManager.pageLabel': 'صفحه {{pageNumber}}',
+    'pageManager.pageLabelFallback': 'صفحه {{index}}',
+    'pageManager.editTitle': 'ویرایش تصاویر صفحه {{index}}',
+    'pageManager.deleteTitle': 'حذف صفحه {{index}}',
+    'pageManager.placeholder': 'هنوز صفحه‌ای پردازش نشده است.',
+    'settings.title': 'تنظیمات ترجمه و زبان',
+    'settings.description': 'زبان مقصد و رابط کاربری را انتخاب کنید:',
+    'settings.persian': 'فارسی',
+    'settings.english': 'English',
+    'analysis.title': 'خلاصه آخرین تحلیل',
+    'analysis.subject': 'موضوع:',
+    'analysis.translation': 'ترجمه:',
+    'analysis.unknown': 'نامشخص',
+    'output.preview': 'پیش‌نمایش کتاب',
+    'output.title': 'خروجی نهایی',
+    'output.getPdf': 'دریافت PDF',
+    'output.downloadHtml': 'دانلود HTML',
+    'output.copyCode': 'کپی کد',
+    'output.smartRevision': 'بازبینی هوشمند',
+    'editModal.title': 'ویرایش تصاویر صفحه {{pageIndex}}',
+    'editModal.id': 'شناسه:',
+    'editModal.noPlaceholders': 'هیچ تصویر جایگزینی در این صفحه یافت نشد.',
+    'editModal.close': 'بستن',
+    'toasts.pageProcessedSuccessSingle': "'{{fileName}}' با موفقیت پردازش شد.",
+    'toasts.pageProcessedErrorSingle': "پردازش '{{fileName}}' ناموفق بود.",
+    'toasts.resetConfirmTitle': 'آیا می‌خواهید کل صف را پاک کنید؟',
+    'toasts.resetConfirmBody': 'این عمل قابل بازگشت نیست.',
+    'toasts.cancel': 'لغو',
+    'toasts.confirmReset': 'بله، پاک کن',
+    'toasts.bookCleared': 'صف و نتایج با موفقیت پاک شد.',
+    'toasts.deletePageConfirmTitle': 'آیا از حذف صفحه {{pageIndex}} مطمئن هستید؟',
+    'toasts.confirmDelete': 'حذف کن',
+    'toasts.pageDeleted': 'صفحه {{pageIndex}} حذف شد.',
+    'toasts.reorderSuccess': 'ترتیب صفحات به‌روزرسانی شد.',
+    'toasts.imageUpdated': 'تصویر برای صفحه {{pageIndex}} به‌روزرسانی شد.',
+    'toasts.imageStyleUpdated': 'سبک تصویر برای صفحه {{pageIndex}} به‌روزرسانی شد.',
+    'toasts.imageSizeUpdated': 'اندازه تصویر برای صفحه {{pageIndex}} به‌روزرسانی شد.',
+    'toasts.pdfPopupBlocked': 'لطفاً مسدودکننده پاپ‌آپ را غیرفعال کنید.',
+    'toasts.copySuccess': 'کد HTML با موفقیت کپی شد.',
+    'toasts.downloadSuccess': 'فایل {{filename}} دانلود شد.',
+    'toasts.imageFileError': 'خطا در تبدیل فایل تصویر.',
+    'toasts.revisionStart': 'بازبینی هوشمند آغاز شد...',
+    'toasts.revisionSuccess': 'بازبینی هوشمند با موفقیت کامل شد.',
+    'toasts.revisionError': 'بازبینی با {{count}} خطا کامل شد.',
+    'geminiErrors.safety': 'پاسخ به دلیل فیلترهای ایمنی مسدود شد.',
+    'geminiErrors.recitation': 'پاسخ به دلیل شباهت به محتوای آموزشی مسدود شد.',
+    'geminiErrors.empty': 'مدل هوش مصنوعی یک پاسخ خالی برگرداند.',
+    'geminiErrors.unknown': 'یک خطای ناشناخته رخ داد.',
+    'geminiErrors.invalidJson': 'پاسخ دریافتی از هوش مصنوعی معتبر نبود.',
+  },
+  en: {
+    'app.title': 'Image to HTML with Gemini',
+    'uploader.prompt': 'Drag & drop images or click to select',
+    'uploader.addMore': 'Add More Images',
+    'uploader.selected': '{{count}} images added to the queue.',
+    'uploader.limitError': 'You can only upload a maximum of {{max}} files at a time.',
+    'preview.title': 'HTML Preview',
+    'preview.placeholder': 'The book preview will appear here after uploading an image.',
+    'progress.title': 'Processing Queue',
+    'progress.step1': 'Step 1 of 2: Analyzing & Translating...',
+    'progress.step2': 'Step 2 of 2: Applying Layout...',
+    'progress.pageSuccess': 'Completed.',
+    'progress.errorTitle': 'Error',
+    'progress.status.queued': 'Queued',
+    'progress.status.processing': 'Processing',
+    'progress.status.completed': 'Completed',
+    'progress.status.error': 'Error',
+    'progress.status.verifying': 'Verifying',
+    'progress.userCancelled': 'Operation cancelled by user.',
+    'progress.cancel': 'Cancel',
+    'imageManager.title': 'Image Manager',
+    'imageManager.page': 'Page {{pageIndex}}:',
+    'imageManager.chooseFile': 'Choose File',
+    'imageManager.instructions': 'Select the corresponding image file for each item to replace it.',
+    'imageManager.noPlaceholders': 'No image placeholders to fill.',
+    'imageManager.fit.custom': 'Custom',
+    'imageManager.fit.fixed': 'Fixed Box',
+    'imageManager.fit.rectangle': 'Rectangle Box',
+    'imageManager.customWidth': 'Width',
+    'imageManager.customHeight': 'Height',
+    'pageManager.title': 'Page Manager',
+    'pageManager.progressTitle': 'Page Manager ({{processed}}/{{total}})',
+    'pageManager.resetTitle': 'Clear Book',
+    'pageManager.instructions': 'Drag and drop pages to reorder.',
+    'pageManager.pageLabel': 'Page {{pageNumber}}',
+    'pageManager.pageLabelFallback': 'Page {{index}}',
+    'pageManager.editTitle': 'Edit Images for Page {{index}}',
+    'pageManager.deleteTitle': 'Delete Page {{index}}',
+    'pageManager.placeholder': 'No pages have been processed yet.',
+    'settings.title': 'Translation & Language Settings',
+    'settings.description': 'Select the target language and UI language:',
+    'settings.persian': 'فارسی',
+    'settings.english': 'English',
+    'analysis.title': 'Last Analysis Summary',
+    'analysis.subject': 'Subject:',
+    'analysis.translation': 'Translation:',
+    'analysis.unknown': 'Unknown',
+    'output.preview': 'Book Preview',
+    'output.title': 'Final Output',
+    'output.getPdf': 'Get PDF',
+    'output.downloadHtml': 'Download HTML',
+    'output.copyCode': 'Copy Code',
+    'output.smartRevision': 'Smart Revision',
+    'editModal.title': 'Edit Images for Page {{pageIndex}}',
+    'editModal.id': 'ID:',
+    'editModal.noPlaceholders': 'No image placeholders were found on this page.',
+    'editModal.close': 'Close',
+    'toasts.pageProcessedSuccessSingle': "'{{fileName}}' was processed successfully.",
+    'toasts.pageProcessedErrorSingle': "Failed to process '{{fileName}}'.",
+    'toasts.resetConfirmTitle': 'Do you want to clear the entire queue?',
+    'toasts.resetConfirmBody': 'This action cannot be undone.',
+    'toasts.cancel': 'Cancel',
+    'toasts.confirmReset': 'Yes, clear it',
+    'toasts.bookCleared': 'Queue and results cleared successfully.',
+    'toasts.deletePageConfirmTitle': 'Are you sure you want to delete page {{pageIndex}}?',
+    'toasts.confirmDelete': 'Delete',
+    'toasts.pageDeleted': 'Page {{pageIndex}} was deleted.',
+    'toasts.reorderSuccess': 'Page order updated.',
+    'toasts.imageUpdated': 'Image for page {{pageIndex}} updated.',
+    'toasts.imageStyleUpdated': 'Image style for page {{pageIndex}} updated.',
+    'toasts.imageSizeUpdated': 'Image size for page {{pageIndex}} updated.',
+    'toasts.pdfPopupBlocked': 'Please disable your pop-up blocker.',
+    'toasts.copySuccess': 'HTML code copied successfully.',
+    'toasts.downloadSuccess': '{{filename}} downloaded.',
+    'toasts.imageFileError': 'Error converting image file.',
+    'toasts.revisionStart': 'Smart revision has started...',
+    'toasts.revisionSuccess': 'Smart revision completed successfully.',
+    'toasts.revisionError': 'Revision completed with {{count}} errors.',
+    'geminiErrors.safety': 'Response was blocked due to safety filters.',
+    'geminiErrors.recitation': 'Response was blocked due to similarity to training data.',
+    'geminiErrors.empty': 'The AI model returned an empty response.',
+    'geminiErrors.unknown': 'An unknown error occurred.',
+    'geminiErrors.invalidJson': 'The response from the AI was not valid.',
+  },
+};
+
+const getTranslator = (locale: Locale) => (key: string, params?: Record<string, string | number>) => {
+  let text = translations[locale][key as keyof typeof translations[Locale]] || key;
+  if (params) {
+    Object.keys(params).forEach(pKey => {
+      const regex = new RegExp(`{{${pKey}}}`, 'g');
+      text = text.replace(regex, String(params[pKey]));
+    });
+  }
+  return text;
+};
+
+type Translator = ReturnType<typeof getTranslator>;
+
+interface LocaleContextType {
+  locale: Locale;
+  t: Translator;
+  localizeNumber: (num: number) => string;
+}
+
+const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
+export const useLocale = () => {
+  const context = useContext(LocaleContext);
+  if (!context) {
+    throw new Error('useLocale must be used within a LocaleProvider');
+  }
+  return context;
+};
+
+// --- End Localization Setup ---
+
+const LOCAL_STORAGE_LANG_KEY = 'bookLayout_language';
+
+export type ProcessedPage = {
+    html: string;
+    pageNumber: string | null;
+};
+
+export type QueueStatus = 'queued' | 'processing' | 'completed' | 'error' | 'verifying';
+
+export type QueueItem = {
+  id: string;
+  file: File;
+  status: QueueStatus;
+  progressSteps: string[];
+  error: string | null;
+  result: ProcessedPage | null;
+  abortController: AbortController;
+};
+
+const CONCURRENCY_LIMIT = 5;
+
+interface Placeholder {
+  pageIndex: number;
+  placeholderId: string;
+  alt: string;
+}
+
+const confirmationToastOptions = {
+  style: {
+    background: '#374151', // bg-gray-700
+    color: '#F9FAFB', // text-gray-50
+    border: '1px solid #4B5563', // border-gray-600
+  },
+};
+
+const extractPageNumber = (htmlString: string): string | null => {
+    if (typeof DOMParser === 'undefined' || !htmlString) return null;
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlString, 'text/html');
+        
+        const headerNumEl = doc.querySelector('.content-header-bar .page-num');
+        if (headerNumEl && headerNumEl.textContent && headerNumEl.textContent.trim()) {
+            return headerNumEl.textContent.trim();
+        }
+        
+        const pageNumEl = doc.querySelector('.page-number');
+        if (pageNumEl && pageNumEl.textContent && pageNumEl.textContent.trim()) {
+            return pageNumEl.textContent.trim();
+        }
+    } catch (e) {
+        console.error("Error parsing HTML for page number:", e);
+    }
+    
+    return null;
+};
+
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
+};
+
+const localizeNumeralsInHtml = (html: string): string => {
+    if (typeof DOMParser === 'undefined' || !html) return html;
+
+    try {
+        const persianNumerals = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+        const arabicNumeralsRegex = /[0-9]/g;
+
+        const toPersianNumerals = (text: string | null): string | null => {
+            if (!text) return text;
+            return text.replace(arabicNumeralsRegex, (digit) => persianNumerals[parseInt(digit, 10)]);
+        };
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        const walker = document.createTreeWalker(
+            doc.body, 
+            NodeFilter.SHOW_TEXT, 
+            null
+        );
+
+        let node;
+        while(node = walker.nextNode()) {
+            if (node.parentElement && !['SCRIPT', 'STYLE'].includes(node.parentElement.tagName)) {
+                 node.nodeValue = toPersianNumerals(node.nodeValue);
+            }
+        }
+        
+        return doc.body.innerHTML;
+
+    } catch (e) {
+        console.error("Error localizing numerals in HTML:", e);
+        return html; // Return original HTML on error
+    }
+};
+
+
+const EditImageModal = ({ page, pageIndex, onClose, onImageSrcUpdate }: { page: ProcessedPage, pageIndex: number, onClose: () => void, onImageSrcUpdate: (pageIndex: number, placeholderId: string, newSrc: string) => void }) => {
+    const { t } = useLocale();
+    const placeholders = useMemo(() => {
+        const foundPlaceholders: Omit<Placeholder, 'pageIndex'>[] = [];
+        if (typeof DOMParser === 'undefined') return [];
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(page.html, 'text/html');
+        const images = doc.querySelectorAll('img[data-placeholder-id]');
+        
+        images.forEach(img => {
+            const placeholderId = img.getAttribute('data-placeholder-id');
+            if (placeholderId) {
+                foundPlaceholders.push({
+                    placeholderId,
+                    alt: img.getAttribute('alt') || 'Untitled Image',
+                });
+            }
+        });
+        return foundPlaceholders;
+    }, [page.html]);
+
+    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>, placeholder: Omit<Placeholder, 'pageIndex'>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            try {
+                const base64Src = await fileToBase64(file);
+                onImageSrcUpdate(pageIndex, placeholder.placeholderId, base64Src);
+            } catch (error) {
+                console.error("Error converting file to Base64", error);
+                toast.error(t('toasts.imageFileError'));
+            }
+        }
+    }, [onImageSrcUpdate, pageIndex, t]);
+
+    return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-lg w-full max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-lg text-gray-200">{t('editModal.title', { pageIndex: pageIndex + 1 })}</h3>
+                     <button onClick={onClose} className="text-gray-400 hover:text-white">&times;</button>
+                </div>
+                {placeholders.length > 0 ? (
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                        {placeholders.map((p) => (
+                            <div key={p.placeholderId} className="text-sm">
+                                <p className="text-gray-300 mb-1 truncate" title={p.alt}>
+                                    <span className="font-semibold text-purple-400">{t('editModal.id')}</span> {p.alt}
+                                </p>
+                                <label className="block w-full">
+                                    <span className="sr-only">{`Choose image for ${p.alt}`}</span>
+                                    <input 
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => handleFileChange(e, p)}
+                                        className="block w-full text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-gray-700 file:text-gray-300 hover:file:bg-gray-600 cursor-pointer"
+                                    />
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="flex-1 flex items-center justify-center text-gray-400">
+                        <p>{t('editModal.noPlaceholders')}</p>
+                    </div>
+                )}
+                 <button onClick={onClose} className="mt-6 w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
+                    {t('editModal.close')}
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const ImageToHtmlConverterInternal = () => {
+  const { t } = useLocale();
+  const { language, setLanguage } = useContext(LanguageStateContext);
+
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [uploaderKey, setUploaderKey] = useState(0);
+  const [lastSuccessfulAnalysis, setLastSuccessfulAnalysis] = useState<any>(null);
+  const [editingPage, setEditingPage] = useState<{ index: number; page: ProcessedPage } | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  const isBusy = useMemo(() => queue.some(item => ['processing', 'queued', 'verifying'].includes(item.status as any)), [queue]);
+
+  useEffect(() => {
+    async function loadInitialData() {
+        try {
+            const [storedQueue, storedAnalysis] = await Promise.all([
+                loadQueueFromDB(),
+                loadAnalysisFromDB()
+            ]);
+
+            if (storedQueue) {
+                const parsedQueue = storedQueue.map((item: any) => ({
+                    ...item,
+                    file: new File([], item.file.name, { type: item.file.type }),
+                    abortController: new AbortController(),
+                    status: (item.status === 'processing' || item.status === 'verifying') ? 'queued' : item.status,
+                }));
+                setQueue(parsedQueue);
+            }
+            if (storedAnalysis) {
+                setLastSuccessfulAnalysis(storedAnalysis);
+            }
+        } catch (error) {
+            console.error("Failed to load state from IndexedDB", error);
+        }
+    }
+    loadInitialData();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const serializableQueue = queue.map(({ abortController, ...item }) => item);
+      saveQueueToDB(serializableQueue);
+    } catch (error) {
+      console.error("Failed to save queue to IndexedDB", error);
+      toast.error("Could not save project state.");
+    }
+  }, [queue]);
+  
+  useEffect(() => {
+    try {
+      if (lastSuccessfulAnalysis) {
+        saveAnalysisToDB(lastSuccessfulAnalysis);
+      }
+    } catch (error)      {
+      console.error("Failed to save analysis to IndexedDB", error);
+    }
+  }, [lastSuccessfulAnalysis]);
+
+  const handleImageUpload = useCallback((files: File[]) => {
+    const newItems: QueueItem[] = files.map(file => ({
+      id: `${file.name}-${file.lastModified}-${Math.random()}`,
+      file,
+      status: 'queued',
+      progressSteps: [],
+      error: null,
+      result: null,
+      abortController: new AbortController(),
+    }));
+    setQueue(prev => [...prev, ...newItems]);
+  }, []);
+
+  useEffect(() => {
+      if (isVerifying) return; // Don't process queue during verification
+
+      const processQueue = () => {
+          const processingItems = queue.filter(item => item.status === 'processing');
+          if (processingItems.length >= CONCURRENCY_LIMIT) {
+              return;
+          }
+
+          const itemsToProcess = queue.filter(item => item.status === 'queued').slice(0, CONCURRENCY_LIMIT - processingItems.length);
+
+          for (const item of itemsToProcess) {
+              setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing', error: null, progressSteps: [] } : q));
+              
+              const updateProgress = (messageKey: string) => {
+                  setQueue(prev => prev.map(q => {
+                      if (q.id === item.id) {
+                          const isError = messageKey.startsWith('error:');
+                          const errorText = isError ? t(messageKey.substring(6)) : q.error;
+                          return { ...q, progressSteps: [...q.progressSteps, messageKey], error: errorText };
+                      }
+                      return q;
+                  }));
+              };
+              
+              convertImageToBookLayout(item.file, language, updateProgress)
+                  .then(({ analysis, html_code }) => {
+                      let finalHtml = html_code;
+                      if (language === 'Persian') {
+                          finalHtml = localizeNumeralsInHtml(html_code);
+                      }
+                      const pageNumber = extractPageNumber(finalHtml);
+                      
+                      setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed', result: { html: finalHtml, pageNumber } } : q));
+                      setLastSuccessfulAnalysis(analysis);
+                      toast.success(t('toasts.pageProcessedSuccessSingle', { fileName: item.file.name }));
+                  })
+                  .catch(error => {
+                      const errorKey = error instanceof Error ? error.message : 'geminiErrors.unknown';
+                      const errorMessage = t(errorKey);
+                      setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: errorMessage } : q));
+                      toast.error(t('toasts.pageProcessedErrorSingle', { fileName: item.file.name }));
+                  });
+          }
+      };
+
+      processQueue();
+  }, [queue, language, t, isVerifying]);
+
+  const handleResetBook = useCallback(() => {
+    toast((tx) => (
+      <div className="flex flex-col gap-3 p-2 text-right">
+        <p className="font-semibold">{t('toasts.resetConfirmTitle')}</p>
+        <p className="text-sm text-gray-400">{t('toasts.resetConfirmBody')}</p>
+        <div className="flex gap-2 justify-end">
+          <button onClick={() => toast.dismiss(tx.id)} className="px-3 py-1 text-sm rounded-md bg-gray-600 hover:bg-gray-500 text-white">{t('toasts.cancel')}</button>
+          <button onClick={async () => {
+            queue.forEach(item => item.status === 'processing' && item.abortController.abort());
+            setQueue([]);
+            setLastSuccessfulAnalysis(null);
+            setUploaderKey(prev => prev + 1);
+            await clearDB();
+            toast.dismiss(tx.id);
+            toast.success(t('toasts.bookCleared'));
+          }} className="px-3 py-1 text-sm rounded-md bg-red-600 hover:bg-red-700 text-white">{t('toasts.confirmReset')}</button>
+        </div>
+      </div>
+    ), confirmationToastOptions);
+  }, [queue, t]);
+
+  const handleRetryItem = useCallback((itemId: string) => {
+    setQueue(prev => prev.map(item => item.id === itemId ? { ...item, status: 'queued', error: null, progressSteps: [] } : item));
+  }, []);
+
+  const handleRemoveItem = useCallback((itemId: string) => {
+    setQueue(prev => {
+        const itemToRemove = prev.find(item => item.id === itemId);
+        if (itemToRemove && itemToRemove.status === 'processing') {
+            itemToRemove.abortController.abort();
+        }
+        return prev.filter(item => item.id !== itemId);
+    });
+  }, []);
+
+  const processedPages = useMemo(() => {
+    return queue.filter(item => item.status === 'completed' && item.result).map(item => item.result!);
+  }, [queue]);
+
+  const sortedQueueForDisplay = useMemo(() => {
+    const newQueue = [...queue];
+    newQueue.sort((a, b) => {
+        if (a.status === 'completed' && b.status !== 'completed') return 1;
+        if (a.status !== 'completed' && b.status === 'completed') return -1;
+        return 0; // Keep original order for other statuses
+    });
+    return newQueue;
+  }, [queue]);
+
+  const handleDeletePage = useCallback((indexToDelete: number) => {
+    // This index is relative to the `processedPages` array.
+    const pageToDelete = processedPages[indexToDelete];
+    if (!pageToDelete) return;
+
+    toast((tx) => (
+      <div className="flex flex-col gap-3 p-2 text-right">
+        <p className="font-semibold">{t('toasts.deletePageConfirmTitle', { pageIndex: indexToDelete + 1 })}</p>
+        <div className="flex gap-2 justify-end">
+          <button onClick={() => toast.dismiss(tx.id)} className="px-3 py-1 text-sm rounded-md bg-gray-600 hover:bg-gray-500 text-white">{t('toasts.cancel')}</button>
+          <button onClick={() => {
+            setQueue(currentQueue => currentQueue.filter(item => item.result !== pageToDelete));
+            toast.dismiss(tx.id);
+            toast.success(t('toasts.pageDeleted', { pageIndex: indexToDelete + 1 }));
+          }} className="px-3 py-1 text-sm rounded-md bg-red-600 hover:bg-red-700 text-white">{t('toasts.confirmDelete')}</button>
+        </div>
+      </div>
+    ), { ...confirmationToastOptions, id: `delete-page-${indexToDelete}` });
+  }, [processedPages, t]);
+
+  const handleReorderPages = useCallback((startIndex: number, endIndex: number) => {
+    // These indices are relative to the processedPages array
+    setQueue(currentQueue => {
+        const newQueue = [...currentQueue];
+        const completedItems = newQueue.filter(item => item.status === 'completed');
+
+        const [movedItem] = completedItems.splice(startIndex, 1);
+        completedItems.splice(endIndex, 0, movedItem);
+
+        let completedIdx = 0;
+        return newQueue.map(item => {
+            if (item.status === 'completed') {
+                return completedItems[completedIdx++];
+            }
+            return item;
+        });
+    });
+    toast.success(t('toasts.reorderSuccess'));
+  }, [t]);
+
+  const handleEditPage = useCallback((index: number) => {
+    setEditingPage({ index, page: processedPages[index] });
+  }, [processedPages]);
+
+  const fullHtmlDocument = useMemo(() => {
+    if (processedPages.length === 0) return '';
+    return getFullHtmlDocument(processedPages.map(p => p.html));
+  }, [processedPages]);
+
+  const handleImageSrcUpdate = useCallback((pageIndex: number, placeholderId: string, newSrc: string) => {
+    const pageToUpdate = processedPages[pageIndex];
+    if (!pageToUpdate) return;
+
+    setQueue(currentQueue => {
+        return currentQueue.map(item => {
+            if (item.result === pageToUpdate) {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(item.result.html, 'text/html');
+                const imgElement = doc.querySelector(`img[data-placeholder-id="${placeholderId}"]`);
+                if (imgElement) {
+                    imgElement.setAttribute('src', newSrc);
+                    const updatedPageHtml = doc.body.firstElementChild?.outerHTML;
+                    if (updatedPageHtml) {
+                        const newResult = { ...item.result, html: updatedPageHtml };
+                        if (editingPage?.index === pageIndex) {
+                            setEditingPage({ index: pageIndex, page: newResult });
+                        }
+                        return { ...item, result: newResult };
+                    }
+                }
+            }
+            return item;
+        });
+    });
+    toast.success(t('toasts.imageUpdated', { pageIndex: pageIndex + 1 }));
+  }, [processedPages, editingPage, t]);
+
+  const handleImageStyleUpdate = useCallback((pageIndex: number, placeholderId: string, style: ImageStyle) => {
+      const pageToUpdate = processedPages[pageIndex];
+      if (!pageToUpdate) return;
+
+      setQueue(currentQueue => {
+          return currentQueue.map(item => {
+              if (item.result === pageToUpdate) {
+                  const parser = new DOMParser();
+                  const doc = parser.parseFromString(item.result.html, 'text/html');
+                  const imgElement = doc.querySelector(`img[data-placeholder-id="${placeholderId}"]`);
+                  const placeholderElement = imgElement?.closest('.image-placeholder') as HTMLElement | null;
+                  
+                  if (placeholderElement) {
+                      // Clean up previous styles
+                      placeholderElement.classList.remove('fit-fixed', 'fit-rectangle');
+                      placeholderElement.style.width = '';
+                      placeholderElement.style.height = '';
+
+                      if (style === 'fixed') {
+                          placeholderElement.classList.add('fit-fixed');
+                      } else if (style === 'rectangle') {
+                          placeholderElement.classList.add('fit-rectangle');
+                      }
+                      
+                      const updatedPageHtml = doc.body.firstElementChild?.outerHTML;
+                      if (updatedPageHtml) {
+                          return { ...item, result: { ...item.result, html: updatedPageHtml } };
+                      }
+                  }
+              }
+              return item;
+          });
+      });
+      toast.success(t('toasts.imageStyleUpdated', { pageIndex: pageIndex + 1 }));
+  }, [processedPages, t]);
+
+  const handleImageCustomSizeUpdate = useCallback((pageIndex: number, placeholderId: string, width: string, height: string) => {
+      const pageToUpdate = processedPages[pageIndex];
+      if (!pageToUpdate) return;
+
+      setQueue(currentQueue => {
+          return currentQueue.map(item => {
+              if (item.result === pageToUpdate) {
+                  const parser = new DOMParser();
+                  const doc = parser.parseFromString(item.result.html, 'text/html');
+                  const imgElement = doc.querySelector(`img[data-placeholder-id="${placeholderId}"]`);
+                  const placeholderElement = imgElement?.closest('.image-placeholder') as HTMLElement | null;
+                  
+                  if (placeholderElement) {
+                      placeholderElement.classList.remove('fit-fixed', 'fit-rectangle');
+                      
+                      placeholderElement.style.width = width ? `${parseInt(width, 10)}px` : '';
+                      placeholderElement.style.height = height ? `${parseInt(height, 10)}px` : '';
+                      
+                      const updatedPageHtml = doc.body.firstElementChild?.outerHTML;
+                      if (updatedPageHtml) {
+                          return { ...item, result: { ...item.result, html: updatedPageHtml } };
+                      }
+                  }
+              }
+              return item;
+          });
+      });
+  }, [processedPages]);
+
+
+  const handlePrintToPdf = useCallback(() => {
+    if (!fullHtmlDocument) return;
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(fullHtmlDocument);
+      printWindow.document.close();
+      printWindow.onload = () => setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+      }, 500);
+    } else {
+      toast.error(t('toasts.pdfPopupBlocked'));
+    }
+  }, [fullHtmlDocument, t]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(fullHtmlDocument).then(() => toast.success(t('toasts.copySuccess')));
+  }, [fullHtmlDocument, t]);
+
+  const handleDownload = useCallback(() => {
+    const blob = new Blob([fullHtmlDocument], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'book.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(t('toasts.downloadSuccess', { filename: 'book.html' }));
+  }, [fullHtmlDocument, t]);
+  
+  const handleSmartRevision = useCallback(async () => {
+    setIsVerifying(true);
+    toast.loading(t('toasts.revisionStart'), { id: 'revision-toast' });
+
+    const completedItems = queue.filter(item => item.status === 'completed');
+    let errorCount = 0;
+
+    for (const item of completedItems) {
+        setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'verifying' } : q));
+        
+        try {
+            const { changesMade, html: refinedHtml } = await verifyAndRefinePage(item.file, item.result!.html, language);
+            
+            if (changesMade) {
+                let finalHtml = refinedHtml;
+                if (language === 'Persian') {
+                    finalHtml = localizeNumeralsInHtml(refinedHtml);
+                }
+                const newPageNumber = extractPageNumber(finalHtml);
+
+                setQueue(prev => prev.map(q => q.id === item.id ? {
+                    ...q,
+                    status: 'completed',
+                    result: { html: finalHtml, pageNumber: newPageNumber }
+                } : q));
+            } else {
+                // If no changes, just switch status back to completed without touching the data.
+                setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed' } : q));
+            }
+        } catch (error) {
+            errorCount++;
+            const errorKey = error instanceof Error ? error.message : 'geminiErrors.unknown';
+            const errorMessage = t(errorKey);
+            setQueue(prev => prev.map(q => q.id === item.id ? {
+                ...q,
+                status: 'error',
+                error: errorMessage
+            } : q));
+        }
+    }
+
+    setIsVerifying(false);
+    if (errorCount > 0) {
+        toast.error(t('toasts.revisionError', { count: errorCount }), { id: 'revision-toast' });
+    } else {
+        toast.success(t('toasts.revisionSuccess'), { id: 'revision-toast' });
+    }
+  }, [queue, language, t]);
+
+  const hasContent = useMemo(() => processedPages.length > 0, [processedPages]);
+
+
+  return (
+    <>
+      <section className="flex flex-row items-stretch gap-6 w-full max-w-screen-2xl mx-auto h-[calc(100vh-4rem)]">
+        
+        {/* --- Left Column --- */}
+        <div className="flex-shrink-0 flex flex-col gap-6 w-[350px]">
+           <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+              <h3 className="font-bold text-base text-gray-200 mb-2 text-center">{t('settings.title')}</h3>
+              <p className="text-xs text-gray-400 mb-3 text-center">{t('settings.description')}</p>
+              <div className="flex items-center justify-center p-1 bg-gray-900/50 rounded-full">
+                <button
+                  onClick={() => setLanguage('Persian')}
+                  disabled={isBusy}
+                  className={`w-1/2 px-4 py-1.5 text-sm font-semibold rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${language === 'Persian' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+                >
+                  {t('settings.persian')}
+                </button>
+                <button
+                  onClick={() => setLanguage('English')}
+                  disabled={isBusy}
+                  className={`w-1/2 px-4 py-1.5 text-sm font-semibold rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${language === 'English' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+                >
+                  {t('settings.english')}
+                </button>
+              </div>
+            </div>
+
+          <div className="flex-1 flex flex-col min-h-0 gap-4">
+            {queue.length === 0 ? (
+                <ImageUploader key={uploaderKey} onImageUploaded={handleImageUpload} isDisabled={false} />
+            ) : (
+                <>
+                    <div className="flex-1 min-h-0">
+                        <ProgressDisplay queue={sortedQueueForDisplay} onRetry={handleRetryItem} onRemove={handleRemoveItem} />
+                    </div>
+                    <ImageUploader onImageUploaded={handleImageUpload} isDisabled={isVerifying} compact={true} />
+                </>
+            )}
+          </div>
+
+          {lastSuccessfulAnalysis && !isBusy && (
+              <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                      <DocumentTextIcon className="w-5 h-5 text-gray-400" />
+                      <h3 className="font-bold text-base text-gray-200">{t('analysis.title')}</h3>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                      <p><span className="font-semibold text-gray-400">{t('analysis.subject')}</span> {lastSuccessfulAnalysis.subject || t('analysis.unknown')}</p>
+                      <p><span className="font-semibold text-gray-400">{t('analysis.translation')}</span> {lastSuccessfulAnalysis.source_language || '?'} → {lastSuccessfulAnalysis.target_language || '?'}</p>
+                  </div>
+              </div>
+          )}
+        </div>
+        
+        {/* --- Center Column --- */}
+        <div className="flex-1 flex flex-col gap-4 min-w-0">
+           <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-3 text-center">
+            <h3 className="font-bold text-base text-gray-200">{t('output.preview')}</h3>
+          </div>
+          <div className="flex-1 min-h-0">
+            <HtmlPreview html={fullHtmlDocument} />
+          </div>
+          <div className="max-h-64 overflow-y-auto pr-2 hide-scrollbar">
+            <ImageManager 
+              processedPages={processedPages} 
+              onImageSrcUpdate={handleImageSrcUpdate} 
+              onImageStyleUpdate={handleImageStyleUpdate}
+              onImageCustomSizeUpdate={handleImageCustomSizeUpdate}
+            />
+          </div>
+        </div>
+
+        {/* --- Right Column --- */}
+        <div className="flex-shrink-0 flex flex-col gap-6 w-[350px]">
+          <div className="flex-1 flex flex-col min-h-0">
+            <PageManager 
+              pages={processedPages}
+              totalInQueue={queue.length}
+              onDeletePage={handleDeletePage} 
+              onReorderPages={handleReorderPages} 
+              onResetBook={handleResetBook} 
+              onEditPage={handleEditPage} 
+            />
+          </div>
+
+          <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4">
+              <h3 className="font-bold text-base text-gray-200 mb-4 text-center">{t('output.title')}</h3>
+              <div className="flex flex-col gap-3">
+                  <button onClick={handlePrintToPdf} disabled={!hasContent || isBusy} className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-red-600/80 text-white rounded-md hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"><PdfIcon /> <span>{t('output.getPdf')}</span></button>
+                  <button onClick={handleDownload} disabled={!hasContent || isBusy} className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-blue-600/80 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"><DownloadIcon /> <span>{t('output.downloadHtml')}</span></button>
+                  <button onClick={handleSmartRevision} disabled={processedPages.length === 0 || isBusy} className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-teal-600/80 text-white rounded-md hover:bg-teal-600 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"><SparklesIcon /> <span>{t('output.smartRevision')}</span></button>
+                  <button onClick={handleCopy} disabled={!hasContent || isBusy} className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-green-600/80 text-white rounded-md hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"><CopyIcon /> <span>{t('output.copyCode')}</span></button>
+              </div>
+          </div>
+        </div>
+      </section>
+      {editingPage && <EditImageModal page={editingPage.page} pageIndex={editingPage.index} onClose={() => setEditingPage(null)} onImageSrcUpdate={handleImageSrcUpdate} />}
+    </>
+  );
+};
+
+const LanguageStateContext = createContext<{
+    language: Language;
+    setLanguage: React.Dispatch<React.SetStateAction<Language>>;
+}>(null!);
+
+const ImageToHtmlConverter = () => {
+    const [language, setLanguage] = useState<Language>(() => {
+        try {
+            const storedLang = localStorage.getItem(LOCAL_STORAGE_LANG_KEY);
+            return (storedLang === 'English' || storedLang === 'Persian') ? storedLang : 'Persian';
+        } catch {
+            return 'Persian';
+        }
+    });
+    const locale = language === 'Persian' ? 'fa' : 'en';
+    const t = getTranslator(locale);
+
+    const localizeNumber = useCallback((num: number): string => {
+        if (locale === 'fa') {
+            return toPersianNumerals(num);
+        }
+        return String(num);
+    }, [locale]);
+
+    useEffect(() => {
+        document.documentElement.lang = locale;
+        document.documentElement.dir = locale === 'fa' ? 'rtl' : 'ltr';
+        document.title = t('app.title');
+        try {
+            localStorage.setItem(LOCAL_STORAGE_LANG_KEY, language);
+        } catch (error) {
+            console.error("Failed to save language to localStorage", error);
+        }
+    }, [locale, t, language]);
+
+    return (
+        <LocaleContext.Provider value={{ locale, t, localizeNumber }}>
+            <LanguageStateContext.Provider value={{ language, setLanguage }}>
+                <ImageToHtmlConverterInternal />
+            </LanguageStateContext.Provider>
+        </LocaleContext.Provider>
+    );
+};
+
+export default ImageToHtmlConverter;
